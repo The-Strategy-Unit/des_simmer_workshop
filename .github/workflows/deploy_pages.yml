@@ -19,9 +19,11 @@ jobs:
       run: |
         git config --local user.email "strategy.unit@nhs.net"
         git config --local user.name "Strategy Unit (GitHub Actions)"
+                
         git checkout -b gh-pages
         git rm workshop.Rmd
         git rm README.md
+        git rm -r .github
         mv workshop.html index.html
         git add .
         git commit -m "redeploy pages"
