@@ -1,0 +1,1515 @@
+---
+title: "Workshop for Simmer in R training"
+description: Based on previous workshops in Simul8 and JaamSim using a primary care example
+author: Stacey Croft, Anastasiia Zharinova and Tom Jemmett
+date: 8^th^ July 2021
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    number_sections: yes
+    df_print: "kable"
+---
+
+```{r setup}
+# simplified version of StrategyUnitTheme::su_theme_pal()
+#   see: https://github.com/The-Strategy-Unit/StrategyUnitTheme
+su_theme_pal <- function(palette = "main", ...) {
+  pal <- c(orange = "#f9bf07",
+           red    = "#ec6555",
+           blue   = "#5881c1")
+  grDevices::colorRampPalette(pal, ...)
+}
+```
+
+If you haven't already got these packages installed you will need the following to complete this workshop:
+
+```{r install packages, eval = FALSE}
+install.packages(c("tidyverse", "simmer", "simmer.plot", "gridExtra", "TruncatedNormal"))
+```
+
+# Building the model - part 1
+
+## Libraries needed
+
+```{r libraries}
+suppressPackageStartupMessages({
+  library(tidyverse)
+  library(simmer)
+  library(simmer.plot)
+  library(TruncatedNormal)
+  library(writexl)
+  library(gridExtra)
+})
+```
+
+## Create distribution functions
+
+For the patients interarrival rate, the time taken for asking the screening questions and the time for the receptionists to make the decision on what appointment to book.
+
+You can use helper functions
+
+```{r part 1: create distribuion functions (first option)}
+# generic truncated normal distributions looks like:
+rtnorm(n = 1, mu = 1, sd = 0.25, lb = 0, ub = Inf)
+
+dist_helper <- function(rfn, ...) {
+  function() rfn(1, ...)
+}
+dist_patient_interarrival <- dist_helper(rexp, 50 / 60)
+dist_screening            <- dist_helper(rtnorm, 4, 1,    0, Inf)
+dist_decision             <- dist_helper(rtnorm, 1, 0.25, 0, Inf)
+dist_booking              <- dist_helper(rtnorm, 1, 0.25, 0, Inf)
+```
+
+Alternatively:
+
+```{r part 1: create distribution functions (second option)}
+dist_patient_interarrival <- function() rexp(1, 50 / 60)
+dist_screening            <- function() rtnorm(n = 1, mu = 4, sd = 1,    lb = 0, ub = Inf)
+dist_decision             <- function() rtnorm(n = 1, mu = 1, sd = 0.25, lb = 0, ub = Inf)
+dist_booking              <- function() rtnorm(n = 1, mu = 1, sd = 0.25, lb = 0, ub = Inf)
+dist_contact_mode         <- function() sample(1:2, 1, FALSE, c(0.15, 0.85))
+dist_booking_type         <- function() sample(1:3, 1, FALSE, c(0.3, 0.6, 0.1))
+```
+
+## Creating the trajectories for the branches
+
+Think about the flow diagram of the process to create the trajectories for the model, let's break it down into
+manageable sections.
+
+### ECR branch
+
+Create a trajectory for this branch called `branch_ecr`. Within the trajectory use set_attribute `via_ecr` to label the patient with a value of 1, so we will know what route they have come to analyse later. Then seize a receptionist ready for the next stage of the process.
+
+```{r part 1: branch ecr}
+branch_ecr <- trajectory("branch ecr") %>%
+  set_attribute("via_ecr", 1) %>%
+  seize("receptionist")
+branch_ecr
+```
+
+### Phone branch
+
+create a trajectory for this branch called `branch_phone`. Within the trajectory use set_attribute `via_ecr` to label the patient with a value of 0 (as opposed to 1 which are ECR route patients).
+
+The patients renege after 5 minutes so log this and set the attribute `"reneged"` to 1. Then seize a receptionist ready for the next stage. Once the patient has a receptionist abort the renege and add timeout of distribution screening
+
+```{r part 1: branch phone}
+renege_hungup <- trajectory("hung up") %>%
+  set_attribute("reneged", 1) %>%
+  log_("lost my patience. Hanging up...")
+
+branch_phone <- trajectory("branch phone") %>%
+  set_attribute("via_ecr", 0) %>%
+  renege_in(t = 5, out = renege_hungup) %>%
+  seize("receptionist") %>%
+  renege_abort() %>% # now have a receptionist the patient won't renege
+  timeout(dist_screening)
+```
+
+### Booking option branches
+
+Receptionist is deciding if a patient needs phone appointment, needs phone appointment or does not need any appointment.
+
+```{r part 1: branch booking none}
+branch_booking_none <- trajectory("no appointment needed") %>%
+  release("receptionist") %>%
+  set_attribute("booked_appt", 0)
+branch_booking_none
+```
+
+```{r part 1: branch booking phone}
+branch_booking_phone <- trajectory("booking a phone") %>%
+  timeout(dist_booking) %>%
+  release("receptionist") %>%
+  set_attribute("booked_appt", 1)
+branch_booking_phone
+```
+
+```{r part 1: branch booking face to face}
+branch_booking_f2f <- trajectory("booking a f2f") %>%
+  timeout(dist_booking) %>%
+  release("receptionist") %>%
+  set_attribute("booked_appt", 2)
+branch_booking_f2f
+```
+
+## Patient Trajectory {#p1_trj}
+
+```{r part 1: patient flow trajectory}
+patient_flow <- trajectory("patient flow") %>%
+  branch(dist_contact_mode, TRUE,
+         branch_ecr,
+         branch_phone) %>%
+  timeout(dist_decision) %>%
+  branch(dist_booking_type, TRUE,
+         branch_booking_none,
+         branch_booking_phone,
+         branch_booking_f2f)
+plot(patient_flow, fill = su_theme_pal("main"))
+
+# you can change the verbose argument to TRUE to get more information
+plot(patient_flow, fill = su_theme_pal("main"), verbose = TRUE)
+```
+
+## Add resources and generator to the environment
+
+You can use to() function in the generator, so that it completes the arrivals. Use to() with caution as the stop time is that of the generator and not the simulation. The simulation will run until all arrivals are finished, so we are assuming that staff stay overtime
+
+```{r part 1: add resources and entity generator}
+env_part1 <- simmer("part 1") %>%
+  add_resource("receptionist", 2) %>%
+  add_generator("patient", patient_flow, to(8 * 60, dist_patient_interarrival), mon = 2)
+```
+
+## Run the model
+
+```{r part 1: run the model, include=FALSE}
+# setting a seed value makes it so we always get the same starting point for random numbers, making our results
+# repeatable. the choice of seed is not important
+set.seed(1)
+env_part1 %>%
+  run()
+```
+
+## Glimpse results to check run
+
+```{r part 1: results}
+env_part1 %>%
+  get_mon_arrivals() %>%
+  arrange(start_time) %>%
+  head(10)
+env_part1 %>%
+  get_mon_arrivals() %>%
+  arrange(start_time) %>%
+  tail(10)
+```
+
+## Questions
+
+If you are new to R and struggling with data manipulation, you can export the results as xls or csv. Or email us and we can help you!
+
+```{r optional data export, eval = FALSE}
+write_xlsx(get_mon_arrivals(env_part1), "arrivals_part1.xlsx")
+write_xlsx(get_mon_resources(env_part1), "resources_part1.xlsx")
+write_xlsx(get_mon_attributes(env_part1), "attributes_part1.xlsx")
+```
+
+### Count reneged
+
+```{r part 1: q1}
+env_part1 %>%
+  get_mon_attributes() %>%
+  filter(key == "reneged") %>%
+  summarise(countreneged = n())
+```
+
+`n = 148` with 2 receptionists
+
+### Count F2F
+
+```{r part 1: q2}
+env_part1 %>%
+  get_mon_attributes() %>%
+  filter(key == "booked_appt", value == 2) %>%
+  summarise(countF2F = n())
+```
+
+`n = 27` with 2 receptionists
+
+### Call waits
+
+Get attributes of finished patients from get_mon_attributes(), join with get_mon_arrivals(). Because of varying number of decimal places we get some rounding errors resulting in near zero but negative results. That's why when we are doing data wrangling, wee use pmax (), so it takes 0 or the wait time which ever is greater. We can then calculate summary statistics.
+
+```{r part 1: q3}
+part1_attributes <- env_part1 %>%
+  get_mon_attributes() %>%
+  dplyr::select(-time) %>%
+  pivot_wider(names_from = "key", values_from = "value", values_fill = 0)
+
+part1_callwait_results <- env_part1 %>%
+  get_mon_arrivals(ongoing = TRUE) %>% # not needed as there aren't any due to the generator and run()
+  inner_join(part1_attributes, by = c("name", "replication")) %>%
+  filter(via_ecr == 0) %>%
+  mutate(wait_time_call = case_when(
+    # the caller reneged
+    reneged == 1 ~ 5,
+    # in queue still - these could also still be in progress
+    # (would need to know time resource seized to calculate wait time),
+    # except we used to() in generator and run() so we have no unfinished
+    # !finished ~ (10 * 60) - start_time,
+    # everything else, (assume has been answered)
+    TRUE      ~ pmax(end_time - start_time - activity_time, 0)
+  ))
+
+part1_callwait_summary <- part1_callwait_results %>%
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(!finished),
+            countfinished = sum(finished))
+
+part1_callwait_summary
+```
+
+with 2 receptionists
+
+```
+#     median_wait   mean_wait      var_wait    min_wait    max_wait      Qtile25th_wait    Qtile75th_wait
+#1    4.839153        3.811972      2.657451         0         5           3.010095              5
+
+#     countunfinished countfinished
+#1               0           334
+```
+
+# Scenario additional model features
+
+Glimpse the end tail and also check whether ECR backlog is cleared at the end of the days. Overall backlog - let's look at 1 replication
+
+```{r extra data exploring}
+attributes <- env_part1 %>%
+  get_mon_attributes() %>%
+  filter(replication == 1)
+
+test <- env_part1 %>%
+  get_mon_arrivals() %>%
+  filter(finished == FALSE, replication == 1) %>%
+  inner_join(attributes, by = "name") %>%
+  arrange(start_time)
+
+test
+
+env_part1 %>%
+  get_mon_attributes() %>%
+  filter(replication == 1, key == "via_ecr", value == 1) %>%
+  count()
+```
+
+You can see that everyone finished and we had total of 66 ECR.
+
+# Extra model features - part 2
+
+## New environment
+
+Create a new environment
+
+```{r part 2: new environment}
+env_part2 <- simmer("part2")
+env_part2
+```
+
+## Add time-dependent interarrival times
+
+To include time dependent interarrivals create a different distribution, one for each time period (3 in total).
+You may also find using these helper functions to switch between minutes, hours and days useful:
+
+```{r part 2: time-dependent interarrivals}
+t_minute <- function(t) t
+t_hour   <- function(t) t_minute(t) * 60
+t_day    <- function(t) t_hour(t) * 24
+
+dist_patient_interarrival1 <- function() rexp(1, 120 / t_hour(2))
+dist_patient_interarrival2 <- function() rexp(1, 240 / t_hour(6))
+dist_patient_interarrival3 <- function() rexp(1,  40 / t_hour(2))
+```
+
+## Phone branch with prioritisation
+
+We are also going prioritise the patients contacting the surgery via the phone.
+
+In the ECR branch, no changes are needed. The default priority for all arrivals is set up to 0.
+
+In the phone branch, we want to set a higher priority using set_prioritization(), that receptionists prioritise answering calls over reviewing electronic requests but without interrupting current tasks (`prioirity = 1`, `preemptive = 1`, `restart = FALSE`). If you didn't use now(env_part1) to set attributes you can use join(branch_phone) instead to link after the prioritisation back to your original phone branch.
+
+```{r part 2: phone branch with prioritisation}
+branch_phone2 <- trajectory("branch phone prioritised") %>%
+  set_prioritization(c(1, 1, FALSE)) %>%
+  join(branch_phone)
+
+plot(branch_phone2, fill = su_theme_pal("main"))
+```
+
+from the help page for `add_generator()`:
+
+- `priority`: the priority of each arrival (a higher integer equals higher priority; defaults to the minimum priority,
+which is 0.
+
+- `preemptible`: if a seize occurs in a preemptive resource, this parameter establishes the minimum incoming priority
+that can preempt these arrivals (an arrival with a priority greater than `preemptible` gains the resource). In any case,
+`preemptible` must be equal or greater than priority, and thus only higher priority arrivals can trigger preemption.
+
+- `restart`: whether the activity must be restarted after being preempted.
+
+## Patient Trajectory
+
+same as [Part 1](#p1_trj) but with the new prioritised phone branch
+
+```{r part 2: patient trajectory}
+patient_flow2 <- trajectory("patient flow2") %>%
+  branch(dist_contact_mode, TRUE,
+         branch_ecr,
+         branch_phone2) %>% #<-- changed the phone branch
+  timeout(dist_decision) %>%
+  branch(dist_booking_type, TRUE,
+         branch_booking_none,
+         branch_booking_phone,
+         branch_booking_f2f)
+plot(patient_flow2, fill = su_theme_pal())
+```
+
+## Schedule for staffing
+
+Use the schedule(timetable, values, period) function and set it to repeat the schedule every 24 hour period. Work out from the numbers on each shift what times capacity changes and how many are working at that point:
+
+e.g. 0-8am = 0, 8-9am = 1, 9-9.30 am etc. becomes:
+
+```{r part 2: staff schedule}
+sch_receptionists <- schedule(
+  timetable = t_hour(c(0.0, 8.0, 9.0, 9.5, 12.0, 15.5, 18.0)),
+  values    =        c(0,   1,   2,   4,    3,    1,    0),
+  period    = t_hour(24)
+)
+```
+
+## Add resources and generator to the environment
+
+Add the receptionists as a resource using the schedule you created for the capacity. Either add three different generators to the model environment setting the times they operate with from_to or use functional programming to control this. You can look back at the training slides and examples to help you.
+
+```{r part 2: add resources and entity generator}
+env_part2 %>%
+  add_resource("receptionist", capacity = sch_receptionists) %>%
+  add_generator("patient[8am-10am]", patient_flow2,
+                from_to(t_hour(8), t_hour(10), dist_patient_interarrival1, every = t_day(1)),
+                mon = 2) %>%
+  add_generator("patient[10am-4pm]", patient_flow2,
+                from_to(t_hour(10), t_hour(16), dist_patient_interarrival2, every = t_day(1)),
+                mon = 2) %>%
+  add_generator("patient[4pm-6pm]", patient_flow2,
+                from_to(t_hour(16), t_hour(18), dist_patient_interarrival3, every = t_day(1)),
+                mon = 2)
+```
+
+## Run model
+
+Set the random seed to 1 to give us the same results each time. Run your model for 5 days (5*24*60) or use one of the time helper functions)
+
+```{r part 2: run model, include=FALSE}
+set.seed(1)
+env_part2 %>%
+  run(t_day(5))
+```
+
+
+## Questions
+
+Repeat your analysis of call waits, reneging and F2F appointments as you did for part 1 using the environment for part 2. Plot utilisation of the resources using the plot function with get_mon_arrivals() and the metric "waiting_time".
+
+### Count reneged
+
+```{r part 2: q1}
+env_part2 %>%
+  get_mon_attributes() %>%
+  filter(key == "reneged") %>%
+  summarise(countreneged = n())
+```
+
+`n = 582` with 2 receptionists
+
+### Count F2F
+
+```{r part 2: q2}
+env_part2 %>%
+  get_mon_attributes() %>%
+  filter(key == "booked_appt", value == 2) %>%
+  summarise(countF2F = n())
+```
+
+`n = 160` with 2 receptionists
+
+### Call waits
+
+```{r part 2: q3}
+part2_attributes <- env_part2 %>%
+  get_mon_attributes() %>%
+  dplyr::select(-time) %>%
+  pivot_wider(names_from = "key", values_from = "value", values_fill = 0)
+
+part2_callwait_results <- env_part2 %>%
+  get_mon_arrivals(ongoing = TRUE) %>%
+  full_join(part2_attributes, by = c("name", "replication")) %>% # or can use inner_join
+  filter(via_ecr == 0) %>%
+  mutate(wait_time_call = case_when(
+    reneged == 1 ~ 5,
+    TRUE      ~ pmax(end_time - start_time - activity_time, 0)
+  ))
+
+part2_callwait_summary <- part2_callwait_results %>%
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(!finished),
+            countfinished = sum(finished))
+
+part2_callwait_summary
+```
+
+
+
+```
+#   median_wait     mean_wait     var_wait    min_wait    max_wait    Qtile25th_wait    Qtile75th_wait
+#1    3.825883      3.183036      3.479728          0          5          1.464796              5
+#   countunfinished countfinished
+#1               0          1726
+```
+
+## What else would you do to improve this model?
+
+Some ideas:
+
+* prevent staff staying to finish all just the one they are on,
+* multiple runs,
+* staff breaks, availability, are they also doing other tasks?
+
+## What other metrics would you want to measure / the practice find useful?
+
+Below are some ideas on additional analysis you might want to do
+
+Plot waiting time over time
+
+```{r part 2: show waiting times plot, warning=FALSE}
+plot(get_mon_arrivals(env_part2), metric = "waiting_time")
+```
+
+boxplot to show variation in metrics e.g. call_wait
+
+```{r part 2: boxplots, warning=FALSE}
+g1 <- ggplot() +
+  geom_boxplot(data = part2_callwait_results,
+               aes(x = "rep=1", y = wait_time_call),
+               outlier.shape = 19,
+               width = 0.3,
+               fill = "white",
+               colour = "orange") +
+  geom_point(data = part2_callwait_summary,
+             aes(x = "rep=1", y = mean_wait),
+             shape = 19,
+             size = 2,
+             colour = "red") +
+  labs(x = "Part2",
+       y = "call wait (mins)",
+       title = "Boxplot of call wait from single replication") +
+  theme(axis.text = element_text(size = 11))
+
+g1
+```
+
+Glimpse the end tail and also check whether ECR backlog is cleared at the end of the days. Overall backlog:
+
+```{r part 2: boxplots 2, warning=FALSE}
+attributes <- env_part2 %>%
+  get_mon_attributes() %>%
+  filter(replication == 1)
+
+test <- env_part2 %>%
+  get_mon_arrivals() %>%
+  filter(finished == FALSE, replication == 1) %>%
+  inner_join(attributes, by = "name") %>%
+  arrange(start_time)
+
+test %>%
+  filter(key == "via_ecr", value != 1)
+
+env_part2 %>%
+  get_mon_attributes() %>%
+  filter(replication == 1, key == "via_ecr", value == 1) %>%
+  count()
+
+test %>%
+  head(10) %>%
+  as_tibble()
+```
+
+All unfinished are ECR, because calls were prioritised ahead of them. 357 total ECR.
+
+```
+# A tibble: 3 x 10 - 3 are unfinished in a week out of 357
+# name                start_time end_time activity_time finished replication.x  time key     value replication.y
+#<chr>                    <dbl>    <dbl>         <dbl> <lgl>            <int> <dbl> <chr>   <dbl>         <int>
+#  patient[4pm-6pm]191      6774.       NA            NA FALSE                1 6774. via_ecr     1             1
+#  patient[4pm-6pm]192      6776.       NA            NA FALSE                1 6776. via_ecr     1             1
+#  patient[4pm-6pm]201      6790.       NA            NA FALSE                1 6790. via_ecr     1             1
+```
+
+Look at resources (reception staff in this example)
+
+```{r part 2: analyse resources, warning=FALSE}
+resources2 <- get_mon_resources(env_part2)
+plot(resources2, metric = "usage", "receptionist", items = "server", steps = TRUE)
+plot(resources2, metric = "utilization", "receptionist")
+
+# show the top 10 results
+head(resources2, n = 10)
+
+# list of hours
+HrList <- data.frame(
+  resource = "receptionist",
+  time = seq(from = 0, to = t_day(5), by = 60),
+  server = NA,
+  queue = NA,
+  capacity = NA,
+  queue_size = Inf,
+  system = NA,
+  limit = Inf,
+  replication = 1
+)
+
+# which aren't in the data
+AddSnaps <- filter(HrList, !(time %in% resources2$time))
+
+resources2_hourly <- bind_rows(resources2, AddSnaps) %>%
+  arrange(time) %>%
+  mutate(server = ifelse(is.na(server), lag(server), server),
+         queue = ifelse(is.na(queue), lag(queue), queue),
+         capacity = ifelse(is.na(capacity), lag(capacity), capacity),
+         system = ifelse(is.na(system), lag(system), system))
+
+resourceutilisation_byhour <- resources2_hourly %>%
+  arrange(time) %>%
+  mutate(slot_hour = floor(time / 60)) %>%
+  mutate(slot_day = ceiling(slot_hour / 24)) %>%
+  mutate(slot = slot_hour - ((slot_day - 1) * 24)) %>%
+  group_by(slot) %>%
+  mutate(dt = time - lag(time),
+         capacity = ifelse(capacity < server, server, capacity),
+         in_use = dt * lag(server / capacity)) %>%
+  summarise(utilised_percent = sum(in_use, na.rm = TRUE) / sum(dt, na.rm = TRUE) * 100)
+
+resourceutilisation_byhour
+```
+
+## Alternative way to calculate waiting time - option B
+
+Option B. If you had used now(env_part1) to set attributes then you will need to copy your code and change the environment for all parts of the trajectory in which it was used.
+You then need to create the overall trajectory again using the new version of the phone branch (and other parts if you have used now()).
+
+Firstly, create a new environment.
+
+```{r part 2: option B, warning=FALSE}
+env_part2B <- simmer("part 2B")
+env_part2B
+```
+
+Change references to part env_part2B in all trajectories
+
+```{r part 2: option B 2, warning=FALSE}
+renege_hungup2B <- trajectory("hung up") %>%
+  set_attribute("reneged", 1) %>%
+  set_attribute("reneged_at", function() now(env_part2B)) %>% # changed to env_part2B
+  log_("lost my patience. Hanging up...")
+
+branch_phone2B <- trajectory("branch phone") %>%
+  set_prioritization(c(1, 1, FALSE)) %>% # set to increase priority from default of 0 to 1, no preempt and no restart
+  set_attribute("via_ecr", 0) %>%
+  set_attribute("arrival", function() now(env_part2B)) %>% # changed to env_part2B
+  renege_in(t = 5, out = renege_hungup) %>%
+  seize("receptionist") %>%
+  set_attribute("call_taken", function() now(env_part2B)) %>% # changed to env_part2B
+  renege_abort() %>%
+  timeout(dist_screening)
+
+branch_booking_none2B <- trajectory("no appointment needed") %>%
+  release("receptionist") %>%
+  set_attribute("booked_appt", 0) %>%
+  set_attribute("call_end", function() now(env_part2B)) # changed to env_part2B
+
+branch_booking_phone2B <- trajectory("booking a f2f") %>%
+  timeout(dist_booking) %>%
+  release("receptionist") %>%
+  set_attribute("booked_appt", 1) %>%
+  set_attribute("call_end", function() now(env_part2B)) # changed to env_part2B
+
+branch_booking_f2f2B <- trajectory("booking a f2f") %>%
+  timeout(dist_booking) %>%
+  release("receptionist") %>%
+  set_attribute("booked_appt", 2) %>%
+  set_attribute("call_end", function() now(env_part2B)) # changed to env_part2B
+
+patient_flow2B <- trajectory("patient flow2B") %>%
+  branch(dist_contact_mode, TRUE,
+         branch_ecr,
+         branch_phone2B) %>%
+  timeout(dist_decision) %>%
+  branch(dist_booking_type, TRUE,
+         branch_booking_none2B,
+         branch_booking_phone2B,
+         branch_booking_f2f2B)
+```
+
+Populate environment using the trajectory for patient flow 2B
+
+```{r part 2: option B 3, warning=FALSE}
+env_part2B %>%
+  add_resource("receptionist", capacity = sch_receptionists) %>%
+  add_generator("patient[8am-10am]", patient_flow2B,
+                from_to(t_hour(8), t_hour(10), dist_patient_interarrival1, every = t_day(1)),
+                mon = 2) %>%
+  add_generator("patient[10am-4pm]", patient_flow2B,
+                from_to(t_hour(10), t_hour(16), dist_patient_interarrival2, every = t_day(1)),
+                mon = 2) %>%
+  add_generator("patient[4pm-6pm]", patient_flow2B,
+                from_to(t_hour(16), t_hour(18), dist_patient_interarrival3, every = t_day(1)),
+                mon = 2)
+```
+
+Run your model for 5 days
+
+```{r part 2: option B run, warning=FALSE, include=FALSE}
+set.seed(1)
+env_part2B %>%
+  run(t_day(5))
+```
+
+### Part 2 Questions for Option B
+
+What is the average wait for calls to be answered, number abandoning their calls (hanging up) and the number booked for a face to face appointment in this simulated week?
+
+```{r part 2: option B Q1, warning=FALSE}
+env_part2B %>%
+  get_mon_attributes() %>%
+  filter(key == "reneged") %>%
+  summarise(countreneged = n())
+```
+
+n=582
+
+How many people get a F2F booking?
+
+```{r part 2: option B Q2, warning=FALSE}
+env_part2B %>%
+  get_mon_attributes() %>%
+  filter(key == "booked_appt", value == 2) %>%
+  summarise(countF2F = n())
+```
+
+n=160
+
+What are the call waits?
+
+```{r part 2: option B Q3, warning=FALSE}
+part2B_callwait_results <- env_part2B %>%
+  get_mon_attributes() %>%
+  pivot_wider(-c(time, replication), names_from = key, values_from = value) %>%
+  filter(via_ecr == 0, arrival >= 0) %>%
+  mutate(wait_time_call = case_when(
+    !is.na(reneged) ~ 5,
+    is.na(call_taken) ~ (10 * 60) - arrival, # in queue/progress still, model run for 10 hours
+    TRUE ~ call_taken - arrival # has been answered
+  ))
+
+part2B_callwait_summary <- part2B_callwait_results %>%
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(is.na(call_end) & is.na(reneged)),
+            countfinished = sum(!is.na(call_end) | !is.na(reneged)))
+
+part2B_callwait_summary
+```
+
+```
+#	# A tibble: 1 x 9
+#       median_wait     mean_wait     var_wait  min_wait    max_wait Qtile25th_wait Qtile75th_wait
+#1         3.83          3.18        3.48        0              5           1.46              5
+# countunfinished countfinished
+# 0                 1726
+```
+
+# Multiple runs and Scenarios - part 3
+
+Now we are going to run our model 50 times and analyse different scenarios.
+
+## Replication of baseline
+
+Use lapply to loop through and replicate the environment you created in Part 2 100 times
+
+```{r part 3: replicate model runs, include=FALSE}
+envs_baseline <- lapply(1:50, function(i) {
+  set.seed(i)
+  simmer("baseline") %>%
+    add_resource("receptionist", capacity = sch_receptionists) %>%
+    add_generator("patient[8am-10am]", patient_flow2,
+                  from_to(t_hour(8), t_hour(10), dist_patient_interarrival1, every = t_day(1)),
+                  mon = 2) %>%
+    add_generator("patient[10am-4pm]", patient_flow2,
+                  from_to(t_hour(10), t_hour(16), dist_patient_interarrival2, every = t_day(1)),
+                  mon = 2) %>%
+    add_generator("patient[4pm-6pm]", patient_flow2,
+                  from_to(t_hour(16), t_hour(18), dist_patient_interarrival3, every = t_day(1)),
+                  mon = 2) %>%
+    run(t_day(5))
+})
+```
+
+## get baseline results and plots
+
+Update some of the code you used to look at results in pasrt 1 and 2. This time group_by(replication) before you summarise. E.g count of the reneged, then ungroup(). This will give the result for each replication. It is these that are then summarised again to give your final results for i.e. the mean of the mean number reneged in each replication.
+
+### Count reneged
+
+```{r part 3: count reneged, warning=FALSE}
+envs_baseline %>%
+  get_mon_attributes() %>%
+  filter(key == "reneged") %>%
+  group_by(replication) %>%
+  summarise(countreneged = n()) %>%
+  ungroup() %>%
+  summarise(countreneged_mean = mean(countreneged))
+```
+
+n=580
+
+### Count F2F
+
+```{r part 3: count F2F, warning=FALSE}
+envs_baseline %>%
+  get_mon_attributes() %>%
+  filter(key == "booked_appt", value == 2) %>%
+  group_by(replication) %>%
+  summarise(countF2F = n()) %>%
+  ungroup() %>%
+  summarise(countF2F_mean = mean(countF2F))
+```
+
+n=143
+
+Before we look at call waits let's understand a little more about unfinished. using the staff schedule means that the final staff member finishes at 6pm on the 5th day so at (4*24*60)+(18*60)= 6840, there are 4 in the system, 1 patient in progress and 3 waiting the staff member finishes that one at 6845 and then leaves with 3 remaining unfinished a similar thing occurs at the end of day 3:
+
+```{r part 3: unfinished, warning=FALSE}
+get_mon_resources(envs_baseline) %>%
+  filter(replication == 1) %>%
+  tail(n = 10) # show last 10 rows
+
+get_mon_resources(envs_baseline) %>%
+  filter(replication == 1, time < 6240) %>%
+  tail(n = 10)
+
+envs_baseline %>%
+  get_mon_arrivals(ongoing = TRUE) %>% # 101972 rows
+  filter(replication == 1, is.na(end_time))
+```
+
+### Call waits
+
+```{r part 3: call waits, warning=FALSE}
+baseline_attributes <- envs_baseline %>%
+  get_mon_attributes() %>% #202732 obs
+  dplyr::select(-time) %>%
+  pivot_wider(names_from = "key", values_from = "value", values_fill = 0)
+#101468 obs
+
+baseline_callwait_results <- envs_baseline %>%
+  get_mon_arrivals(ongoing = TRUE) %>%
+  distinct() %>% # goes down to 101618, removes duplicates of unfinished
+  # still more in arrivals than attributes as attributes only has finished
+  full_join(baseline_attributes, by = c("name", "replication")) %>%
+  filter(via_ecr == 0) %>% # phone only also removes those yet to start e.g. start_time -1
+  mutate(wait_time_call = case_when(
+    # the caller reneged
+    reneged == 1 ~ 5,
+    # unfinished still in the system,
+    !finished ~ t_day(5) - start_time,
+    # everything else, (assume has been answered)
+    TRUE      ~ pmax(end_time - start_time - activity_time, 0)
+  ))
+
+## calculate summary statistics
+baseline_callwait_replication_summary <- baseline_callwait_results %>%
+  group_by(replication) %>%
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(!finished),
+            countfinished = sum(finished)) %>%
+  mutate(scenario = "baseline")
+
+# show top 10 rows
+head(baseline_callwait_replication_summary, n = 10)
+
+baseline_callwait_summary <- baseline_callwait_replication_summary %>%
+  summarise(median_wait = mean(median_wait),
+            mean_wait = mean(mean_wait),
+            var_wait = mean(var_wait),
+            min_wait = mean(min_wait),
+            max_wait = mean(max_wait),
+            Qtile25th_wait = mean(Qtile25th_wait),
+            Qtile75th_wait = mean(Qtile75th_wait),
+            countunfinished = mean(countunfinished),
+            countfinished = mean(countfinished)) %>%
+  mutate(scenario = "baseline") # to identify it later
+
+baseline_callwait_summary
+```
+
+# Scenario
+
+If a neighbouring practice closed leading to an increase in demand of 45%. Whilst the practice were able to better advertise the ECR route to patients such that 40% of all the patients (old and new) were able to use this route. What  impact would this have on the call wait and reneging of patients?
+
+## create patient flow 3 for this scenario with 40% ECR
+
+```{r part 4: patient flow}
+dist_contact_mode_S <- function() sample(1:2, 1, FALSE, c(0.4, 0.6))
+patient_flow3 <- trajectory("patient flow3") %>%
+  branch(dist_contact_mode_S, TRUE, # <- changed to the scenario distribution
+         branch_ecr,
+         branch_phone2) %>%
+  timeout(dist_decision) %>%
+  branch(dist_booking_type, TRUE,
+         branch_booking_none,
+         branch_booking_phone,
+         branch_booking_f2f)
+```
+
+## scenario interarrivals
+
+```{r part 4: interarrival distributions}
+dist_patient_interarrival1_S <- function() rexp(1, (120 * 1.45) / t_hour(2))
+dist_patient_interarrival2_S <- function() rexp(1, (240 * 1.45) / t_hour(6))
+dist_patient_interarrival3_S <- function() rexp(1,  (40 * 1.45) / t_hour(2))
+```
+
+## lapply as before but using patient_flow3 and increasing frquency of arrivals
+
+```{r part 4: replicate model runs, include=FALSE}
+envs_scenario <- lapply(1:50, function(i) {
+  set.seed(i)
+  simmer("scenario") %>%
+    add_resource("receptionist", capacity = sch_receptionists) %>%
+    add_generator("patient[8am-10am]", patient_flow3,
+                  from_to(t_hour(8), t_hour(10), dist_patient_interarrival1_S, every = t_day(1)),
+                  mon = 2) %>%
+    add_generator("patient[10am-4pm]", patient_flow3,
+                  from_to(t_hour(10), t_hour(16), dist_patient_interarrival2_S, every = t_day(1)),
+                  mon = 2) %>%
+    add_generator("patient[4pm-6pm]", patient_flow3,
+                  from_to(t_hour(16), t_hour(18), dist_patient_interarrival3_S, every = t_day(1)),
+                  mon = 2) %>%
+    run(t_day(5))
+})
+```
+
+## Scenario results
+
+Repurpose some of the code you used to look at results in parts 1 and 2 of the workshop. Remember to store the results with a different name to your baseline results.
+
+### Count reneged
+
+```{r part 3: count reneged - scenario, warning=FALSE}
+envs_scenario %>%
+  get_mon_attributes() %>%
+  filter(key == "reneged") %>%
+  group_by(replication) %>%
+  summarise(countreneged = n()) %>%
+  ungroup() %>%
+  summarise(countreneged_mean = mean(countreneged))
+```
+
+n=752
+
+### Count F2F
+
+```{r part 3: count F2F - scenario, warning=FALSE}
+envs_scenario %>%
+  get_mon_attributes() %>%
+  filter(key == "booked_appt", value == 2) %>%
+  group_by(replication) %>%
+  summarise(countF2F = n()) %>%
+  ungroup() %>%
+  summarise(countF2F_mean = mean(countF2F))
+```
+
+n=143
+
+### Call waits
+
+```{r part 3: count F2F - scenario 2, warning=FALSE}
+scenario_attributes <- envs_scenario %>%
+  get_mon_attributes() %>%
+  dplyr::select(-time) %>%
+  pivot_wider(names_from = "key", values_from = "value", values_fill = 0)
+
+scenario_callwait_results <- envs_scenario %>%
+  get_mon_arrivals(ongoing = TRUE) %>%
+  distinct() %>%
+  full_join(scenario_attributes, by = c("name", "replication")) %>%
+  filter(via_ecr == 0) %>%
+  mutate(wait_time_call = case_when(
+    # the caller reneged
+    reneged == 1 ~ 5,
+    # unfinished still in the system,
+    !finished ~ t_day(5) - start_time,
+    # everything else, (assume has been answered)
+    TRUE      ~ pmax(end_time - start_time - activity_time, 0)
+  ))
+
+## calculate summary statistics
+scenario_callwait_replication_summary <- scenario_callwait_results %>%
+  group_by(replication) %>%
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(!finished),
+            countfinished = sum(finished)) %>%
+  mutate(scenario = "scenario")
+
+scenario_callwait_summary <- scenario_callwait_replication_summary %>%
+  summarise(median_wait = mean(median_wait),
+            mean_wait = mean(mean_wait),
+            var_wait = mean(var_wait),
+            min_wait = mean(min_wait),
+            max_wait = mean(max_wait),
+            Qtile25th_wait = mean(Qtile25th_wait),
+            Qtile75th_wait = mean(Qtile75th_wait),
+            countunfinished = mean(countunfinished),
+            countfinished = mean(countfinished)) %>%
+  mutate(scenario = "scenario")
+
+# show top 10 results
+head(scenario_callwait_summary, n = 10)
+```
+
+## T-test
+
+Use `t.test()` function to compare waiting times between baseline and scenario and see if there is a significant difference in the results.
+
+### Version taught in slidepack:
+
+```{r part 3: t-test}
+t.test(scenario_callwait_results$wait_time_call, baseline_callwait_results$wait_time_call)
+```
+
+### Paired T-test
+
+This could actually be a paired t-test because they use the same common random number set and have the same number of replications therefore replication 1 of baseline and scenario are correlated (unless the scenario itself changes the andom number sampling). we should check the variances of the differences is less than the individual variances before using paired t test. To do it, we need to:
+
+* combine a dataset
+* compute the difference between the scenario and baseline mean waits for each pair of replications
+* conduct Shapiro-Wilk normality test for the differences and check p-value
+* If p-value is >0.05, we conduct paired t-test
+
+```{r part 3: t-test version 2}
+part3_summary_byreplication <- bind_rows(
+  baseline_callwait_replication_summary,
+  scenario_callwait_replication_summary
+)
+
+d <- with(
+  part3_summary_byreplication,
+  mean_wait[scenario == "baseline"] - mean_wait[scenario == "scenario"]
+)
+shapiro.test(d) # => p-value = 0.6375
+
+res <- t.test(mean_wait ~ scenario, data = part3_summary_byreplication, paired = TRUE)
+res
+```
+
+p-value is greater than the significance level 0.05  implying that the distribution of the differences (d) are not significantly different from normal distribution. therefore we do a paired T-Test
+
+```
+data:  mean_wait by scenario
+t = -26.092, df = 49, p-value < 2.2e-16
+alternative hypothesis: true difference in means is not equal to 0
+95 percent confidence interval:
+  -0.4228384 -0.3623634
+sample estimates:
+  mean of the differences
+-0.3926009
+```
+
+The p-value of the test is < 2.2e-16, which is less than the significance level alpha = 0.05.
+We can then reject null hypothesis and conclude that the average wait in the baseline is significantly different from the average wait in the scenario
+
+### Boxplot of the call waits in the baseline vs scenario
+
+Using the ggplot2 package and geom_boxplot(), create boxplots of the means of the replications of the call waiting time in the baseline compared to the scenario. Set theme and title if you wish. To compare boxplots, you can either
+
+a) create 2 different plots and put them on one chart using gridExtra package
+
+```{r part 3: Boxplot version 1}
+a <- ggplot(baseline_callwait_replication_summary) +
+  geom_boxplot(aes(x = scenario, y = mean_wait),
+               outlier.shape = 19,
+               width = 0.3,
+               fill = "white",
+               colour = "orange") +
+  labs(y = "mean call wait (mins)") +
+  ylim(0, 4) +
+  theme(axis.title.x = element_blank(),
+        axis.text = element_text(size = 11))
+
+b <- ggplot(scenario_callwait_replication_summary) +
+  geom_boxplot(aes(x = scenario, y = mean_wait),
+               outlier.shape = 19,
+               width = 0.3,
+               fill = "white",
+               colour = "orange") +
+  labs(y = "mean call wait (mins)") +
+  ylim(0, 4) +
+  theme(axis.title.x = element_blank(),
+        axis.text = element_text(size = 11))
+
+grid.arrange(a, b, ncol = 2, nrow = 1, top = "Call wait mean results of baseline(left) and scenario(right)")
+```
+
+b) create one plot from combined dataset. Using bind_rows(), create one dataset with both scenarios and plot them together using ggplot2 already have the averages of by replications in part3_summary_byreplication
+
+```{r part 3: Boxplot version 2}
+part3_summary <- bind_rows(baseline_callwait_summary, scenario_callwait_summary)
+
+# plot
+g <- ggplot() +
+  geom_boxplot(data = part3_summary_byreplication,
+               aes(x = scenario, y = mean_wait),
+               outlier.shape = 19,
+               width = 0.3,
+               fill = "white",
+               colour = "orange") +
+  geom_point(data = part3_summary,
+             aes(x = scenario, y = mean_wait),
+             shape = 19,
+             size = 2,
+             colour = "red") +
+  labs(x = "scenario", y = "mean call wait (mins)", title = "Boxplot of mean call wait from 50 replications") +
+  theme(axis.text = element_text(size = 11))
+
+g
+```
+
+### Part 3 Questions
+
+Looking at the results of baseline of 50 replications, what can you say about the results?
+
+What do you interpret from the results of the scenario in comparison to the baseline?
+
+What other analysis might you want to do of the model results?
+
+Additional analysis: example if you want to compare ECR to Phones waits might do it this way:
+
+```{r part 3: additional analysis}
+baseline_wait_results <- envs_baseline %>%
+  get_mon_arrivals(ongoing = TRUE) %>%
+  distinct() %>%
+  full_join(baseline_attributes, by = c("name", "replication")) %>%
+  filter(start_time >= 0) %>% # so use this to remove the not started e.g. start_time -1
+  mutate(wait_time_call = case_when(
+    reneged == 1 ~ 5,
+    !finished ~ t_day(5) - start_time,
+    TRUE      ~ pmax(end_time - start_time - activity_time, 0)
+  ))
+
+baseline_wait_replication_summary <- baseline_wait_results %>%
+  group_by(replication, via_ecr) %>% #group by both of these to get results for phone and ECR
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(!finished),
+            countfinished = sum(finished)) %>%
+  mutate(scenario = "baseline")
+
+# show top 10 results
+head(baseline_wait_replication_summary, n = 10)
+
+baseline_wait_summary <- baseline_wait_replication_summary %>%
+  group_by(via_ecr) %>%
+  summarise(median_wait = mean(median_wait),
+            mean_wait = mean(mean_wait),
+            var_wait = mean(var_wait),
+            min_wait = mean(min_wait),
+            max_wait = mean(max_wait),
+            Qtile25th_wait = mean(Qtile25th_wait),
+            Qtile75th_wait = mean(Qtile75th_wait),
+            countunfinished = mean(countunfinished),
+            countfinished = mean(countfinished))
+
+baseline_wait_summary
+```
+
+What other ways might you want to present data?
+
+For example, plot results from all replications
+
+```{r part 3: additional charts 1}
+plot(get_mon_arrivals(envs_baseline), metric = "waiting_time")
+plot(get_mon_arrivals(envs_scenario), metric = "waiting_time")
+```
+
+Histogram
+
+```{r part 3: additional charts 2}
+ggplot(part3_summary_byreplication, aes(mean_wait)) +
+  geom_histogram(fill = "orange") +
+  labs(title = "Distribution of average call wait in 50 replications") +
+  facet_wrap(vars(scenario), ncol = 2)
+```
+
+### Additional questions if you want to explore model further
+
+What other opportunities are there for improvement of the process?
+
+What other scenarios might you want to consider with the practice? What would your performance indicators be? How would you incorporate them in the model? Have a go if you have time. warm up period, staff rota, percentage coming via ecr, include preemption and restart
+
+What else would need to be considered before they could implement changes suggested by the model? costs, other tasks the staff do, feasibility of suggested rota in real life
+
+Are we running the model for a sufficient number of runs? process converted to R from: Simulations: The Practice of Model Development and Use, Robinson, S., 2nd Ed. 2014, Palgrave Macmillan
+
+Remember back to our t test results we saved in res gave a confidence interval based on student's t distribution
+
+```{r part 3: confidence intervals for t-test 1}
+res$conf.int[1]
+res$conf.int[2]
+```
+
+Create a blank data frame to hold the cumulative results
+
+```{r part 3: confidence intervals for t-test 2}
+check_baseline_replications <- data.frame(matrix(ncol = 5, nrow = 0))
+x <- c("replication", "cmean", "tL", "tU", "percentdeviation")
+colnames(check_baseline_replications) <- x
+
+#for loop to see how the percent deviation of the confidence limits from the mean vary by the number of replications
+for (i in 2:50) {
+  df <- baseline_callwait_replication_summary %>%
+    dplyr::select(replication, mean_wait) %>%
+    filter(replication <= i) %>%
+    summarise(replication = i,
+              cmean = mean(mean_wait),
+              tL = t.test(mean_wait)$conf.int[1],
+              tU = t.test(mean_wait)$conf.int[2],
+              percentdeviation = (cmean - tL) / cmean * 100) %>%
+    data.frame()
+  check_baseline_replications <- bind_rows(check_baseline_replications, df)
+}
+
+# show top 10 results
+head(check_baseline_replications, n = 10)
+```
+
+
+# Part 3 if you use now() function
+
+To include the set_attribute using now() we reference the correct environment for each replication
+
+```{r part 3: option B set up, include=FALSE}
+envs_baselineB <- lapply(1:50, function(i) {
+  assign(paste("env", i[1], sep = "_"), simmer("baselineB"))
+  get(paste0("env_", i))
+
+  # change references to env
+  renege_hungup3B <- trajectory("hung up") %>%
+    set_attribute("reneged", 1) %>%
+    set_attribute("reneged_at", function() now(get(paste0("env_", i)))) %>% # changed to env_part2B
+    log_("lost my patience. Hanging up...")
+
+  branch_phone3B <- trajectory("branch phone") %>%
+    set_prioritization(c(1, 1, FALSE)) %>% # set to increase priority from default of 0 to 1, no preempt and no restart
+    set_attribute("via_ecr", 0) %>%
+    set_attribute("arrival", function() now(get(paste0("env_", i)))) %>% # changed to env_part2B
+    renege_in(t = 5, out = renege_hungup) %>%
+    seize("receptionist") %>%
+    set_attribute("call_taken", function() now(get(paste0("env_", i)))) %>% # changed to env_part2B
+    renege_abort() %>%
+    timeout(dist_screening)
+
+  branch_booking_none3B <- trajectory("no appointment needed") %>%
+    release("receptionist") %>%
+    set_attribute("booked_appt", 0) %>%
+    set_attribute("call_end", function() now(get(paste0("env_", i)))) # changed to env_part2B
+
+  branch_booking_phone3B <- trajectory("booking a f2f") %>%
+    timeout(dist_booking) %>%
+    release("receptionist") %>%
+    set_attribute("booked_appt", 1) %>%
+    set_attribute("call_end", function() now(get(paste0("env_", i)))) # changed to env_part2B
+
+  branch_booking_f2f3B <- trajectory("booking a f2f") %>%
+    timeout(dist_booking) %>%
+    release("receptionist") %>%
+    set_attribute("booked_appt", 2) %>%
+    set_attribute("call_end", function() now(get(paste0("env_", i)))) # changed to env_part2B
+
+  # Overall trajectory:
+
+  rm(patient_flow3B)
+  patient_flow3B <- trajectory("patient flow3B") %>%
+    branch(dist_contact_mode, TRUE,
+           branch_ecr,
+           branch_phone3B) %>%
+    timeout(dist_decision) %>%
+    branch(dist_booking_type, TRUE,
+           branch_booking_none3B,
+           branch_booking_phone3B,
+           branch_booking_f2f3B)
+
+  set.seed(i)
+  get(paste0("env_", i)) %>%
+    add_resource("receptionist", capacity = sch_receptionists) %>%
+    add_generator("patient[8am-10am]", patient_flow3B,
+                  from_to(t_hour(8), t_hour(10), dist_patient_interarrival1, every = t_day(1)),
+                  mon = 2) %>%
+    add_generator("patient[10am-4pm]", patient_flow3B,
+                  from_to(t_hour(10), t_hour(16), dist_patient_interarrival2, every = t_day(1)),
+                  mon = 2) %>%
+    add_generator("patient[4pm-6pm]", patient_flow3B,
+                  from_to(t_hour(16), t_hour(18), dist_patient_interarrival3, every = t_day(1)),
+                  mon = 2) %>%
+    run(t_day(5))
+})
+```
+
+We can now analyse results
+
+### Count reneged
+
+```{r part 3: option B Q1}
+envs_baselineB %>%
+  get_mon_attributes() %>%
+  filter(key == "reneged") %>%
+  group_by(replication) %>%
+  summarise(countreneged = n()) %>%
+  ungroup() %>%
+  summarise(countreneged_mean = mean(countreneged))
+```
+
+n=580
+
+### Count F2F
+
+```{r part 3: option B Q2}
+envs_baselineB %>%
+  get_mon_attributes() %>%
+  filter(key == "booked_appt", value == 2) %>%
+  group_by(replication) %>%
+  summarise(countF2F = n()) %>%
+  ungroup() %>%
+  summarise(countF2F_mean = mean(countF2F))
+```
+
+n=143
+
+### Call waits
+
+```{r part 3: option B Q3}
+baselineB_callwait_results <- envs_baselineB %>%
+  get_mon_attributes() %>%
+  pivot_wider(-c(time), names_from = key, values_from = value) %>%
+  filter(via_ecr == 0, arrival >= 0) %>%
+  mutate(wait_time_call = case_when(
+    !is.na(reneged) ~ 5,
+    is.na(call_taken) ~ (10 * 60) - arrival, # in queue/progress still, model run for 10 hours
+    TRUE ~ call_taken - arrival # has been answered
+  ))
+
+baselineB_callwait_replication_summary <- baselineB_callwait_results %>%
+  group_by(replication) %>%
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(is.na(call_end) & is.na(reneged)),
+            countfinished = sum(!is.na(call_end) | !is.na(reneged)))
+
+# show top 10 results
+head(baselineB_callwait_replication_summary, n = 10)
+
+baselineB_callwait_summary <- baselineB_callwait_replication_summary %>%
+  summarise(median_wait = mean(median_wait),
+            mean_wait = mean(mean_wait),
+            var_wait = mean(var_wait),
+            min_wait = mean(min_wait),
+            max_wait = mean(max_wait),
+            Qtile25th_wait = mean(Qtile25th_wait),
+            Qtile75th_wait = mean(Qtile75th_wait),
+            countunfinished = mean(countunfinished),
+            countfinished = mean(countfinished)) %>%
+  mutate(scenario = "baseline") # to identify it later
+
+baselineB_callwait_summary
+
+baselineB_callwait_summary$mean_wait
+baseline_callwait_summary$mean_wait
+```
+
+## Part 3 Scenarios with option B
+
+Trajectory must be included inside the lapply for replication
+
+```{r part 3: option B set up scenario, include=FALSE}
+envs_scenarioB <- lapply(1:50, function(i) {
+  assign(paste("env", i[1], sep = "_"), simmer("scenarioB"))
+  get(paste0("env_", i))
+
+  # change references to env
+  renege_hungup3B <- trajectory("hung up") %>%
+    set_attribute("reneged", 1) %>%
+    set_attribute("reneged_at", function() now(get(paste0("env_", i)))) %>% # changed to env_part2B
+    log_("lost my patience. Hanging up...")
+
+  branch_phone3B <- trajectory("branch phone") %>%
+    set_prioritization(c(1, 1, FALSE)) %>% # set to increase priority from default of 0 to 1, no preempt and no restart
+    set_attribute("via_ecr", 0) %>%
+    set_attribute("arrival", function() now(get(paste0("env_", i)))) %>% # changed to env_part2B
+    renege_in(t = 5, out = renege_hungup) %>%
+    seize("receptionist") %>%
+    set_attribute("call_taken", function() now(get(paste0("env_", i)))) %>% # changed to env_part2B
+    renege_abort() %>%
+    timeout(dist_screening)
+
+  branch_booking_none3B <- trajectory("no appointment needed") %>%
+    release("receptionist") %>%
+    set_attribute("booked_appt", 0) %>%
+    set_attribute("call_end", function() now(get(paste0("env_", i)))) # changed to env_part2B
+
+  branch_booking_phone3B <- trajectory("booking a f2f") %>%
+    timeout(dist_booking) %>%
+    release("receptionist") %>%
+    set_attribute("booked_appt", 1) %>%
+    set_attribute("call_end", function() now(get(paste0("env_", i)))) # changed to env_part2B
+
+  branch_booking_f2f3B <- trajectory("booking a f2f") %>%
+    timeout(dist_booking) %>%
+    release("receptionist") %>%
+    set_attribute("booked_appt", 2) %>%
+    set_attribute("call_end", function() now(get(paste0("env_", i)))) # changed to env_part2B
+
+  # Overall trajectory:
+  rm(patient_flow3BS)
+
+  # Create a new patient flow trajectory using the new contact mode distribution
+  patient_flow3BS <- trajectory("patient flow3BS") %>%
+    branch(dist_contact_mode_S, TRUE, # <-changed to the scenario distribution
+           branch_ecr,
+           branch_phone3B) %>%
+    timeout(dist_decision) %>%
+    branch(dist_booking_type, TRUE,
+           branch_booking_none3B,
+           branch_booking_phone3B,
+           branch_booking_f2f3B)
+
+  set.seed(i)
+  get(paste0("env_", i)) %>%
+    add_resource("receptionist", capacity = sch_receptionists) %>%
+    add_generator("patient[8am-10am]", patient_flow3BS,
+                  from_to(t_hour(8), t_hour(10), dist_patient_interarrival1_S, every = t_day(1)),
+                  mon = 2) %>%
+    add_generator("patient[10am-4pm]", patient_flow3BS,
+                  from_to(t_hour(10), t_hour(16), dist_patient_interarrival2_S, every = t_day(1)),
+                  mon = 2) %>%
+    add_generator("patient[4pm-6pm]", patient_flow3BS,
+                  from_to(t_hour(16), t_hour(18), dist_patient_interarrival3_S, every = t_day(1)),
+                  mon = 2) %>%
+    run(t_day(5))
+})
+```
+
+We can now analyse results
+
+### Count reneged
+
+```{r part 3: option B Q1 scenario}
+envs_scenarioB %>%
+  get_mon_attributes() %>%
+  filter(key == "reneged") %>%
+  group_by(replication) %>%
+  summarise(countreneged = n()) %>%
+  ungroup() %>%
+  summarise(countreneged_mean = mean(countreneged))
+```
+
+n=752
+
+### Count F2F
+
+```{r part 3: option B Q2 scenario}
+envs_scenarioB %>%
+  get_mon_attributes() %>%
+  filter(key == "booked_appt", value == 2) %>%
+  group_by(replication) %>%
+  summarise(countF2F = n()) %>%
+  ungroup() %>%
+  summarise(countF2F_mean = mean(countF2F))
+```
+
+n=165
+
+### Call waits
+
+```{r part 3: option B Q3 scenario}
+scenarioB_callwait_results <- envs_scenarioB %>%
+  get_mon_attributes() %>%
+  pivot_wider(-c(time), names_from = key, values_from = value) %>%
+  filter(via_ecr == 0, arrival >= 0) %>%
+  mutate(wait_time_call = case_when(
+    !is.na(reneged) ~ 5,
+    is.na(call_taken) ~ (10 * 60) - arrival, # in queue/progress still, model run for 10 hours
+    TRUE ~ call_taken - arrival # has been answered
+  ))
+
+scenarioB_callwait_replication_summary <- scenarioB_callwait_results %>%
+  group_by(replication) %>%
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(is.na(call_end) & is.na(reneged)),
+            countfinished = sum(!is.na(call_end) | !is.na(reneged)))
+
+# show top 10 results
+head(scenarioB_callwait_replication_summary, n = 10)
+
+scenarioB_callwait_summary <- scenarioB_callwait_replication_summary %>%
+  summarise(median_wait = mean(median_wait),
+            mean_wait = mean(mean_wait),
+            var_wait = mean(var_wait),
+            min_wait = mean(min_wait),
+            max_wait = mean(max_wait),
+            Qtile25th_wait = mean(Qtile25th_wait),
+            Qtile75th_wait = mean(Qtile75th_wait),
+            countunfinished = mean(countunfinished),
+            countfinished = mean(countfinished)) %>%
+  mutate(scenario = "scenario") # to identify it later
+
+scenarioB_callwait_summary
+
+scenarioB_callwait_summary$mean_wait
+scenario_callwait_summary$mean_wait
+```
