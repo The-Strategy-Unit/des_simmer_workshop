@@ -1,0 +1,184 @@
+
+
+@import url(https://fonts.googleapis.com/css?family=Fira+Sans:300,300i,400,400i,500,500i,700,700i);
+@import url(https://fonts.googleapis.com/css?family=Roboto:300,400,500,700,300i,400i,500i,700i);
+@import url(https://fonts.googleapis.com/css?family=Lato:300,400,500,700,300i,400i,500i,700i);
+
+body { /* body text */
+  font-family: 'Fira Sans', sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: #2c2825;
+}
+
+h1.title { /* YAML title */
+  font-family: 'Roboto', sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  color: #2c2825;
+}
+
+h3.subtitle { /* YAML subtitle */
+  font-family: 'Roboto', sans-serif;
+  font-size: 20px;
+  color: #2c2825;
+}
+
+h4.author { /* YAML author */
+  font-size: 16px;
+  color: #686f73;
+}
+
+h4.date { /* YAML date */
+  font-size: 16px;
+  color: #686f73;
+}
+
+/* headers */
+h1 {
+  font-family: 'Roboto', sans-serif;
+  font-size: 20px;
+  font-weight: 700;
+  margin-top: 48px;
+  color: #2c2825;
+}
+
+h2 {
+  font-family: 'Roboto', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 48px;
+  color: #2c2825;
+}
+
+h3 {
+  font-family: 'Roboto', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 48px;
+  color: #2c2825;
+}
+
+/* figures caption */
+p.caption {
+  font-family: 'Roboto', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #2c2825;
+  text-align: left;
+  margin-top: 12px;
+}
+
+/* tables caption */
+caption {
+  font-family: 'Roboto', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: #2c2825;
+  text-align: left;
+  margin-top: 12px;
+}
+
+/* block quotes */
+blockquote {
+  font-size: 18px;
+  font-weight: 500;
+  color: #686f73;
+}
+
+/* block quotes name */
+.bqname {
+  font-size: 14px;
+  font-style: italic;
+  color: #686f73;
+}
+
+/* bold text */
+.bolded {
+  font-weight: 500;
+}
+
+/* tables */
+table {
+  border-collapse: collapse;
+}
+
+.table tbody {
+  font-family: 'Lato', sans-serif;
+  font-size: 14px;
+  color: #2c2825;
+}
+
+.table th {
+  font-family: 'Lato', sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  color: #2c2825;
+}
+
+.table tfoot {
+  border-top: none;
+  border-bottom: none;
+  font-size: 80%;
+}
+
+.table tfoot tr:last-child td::before {
+  border-top: none;
+  line-height: 1.4em;
+  content: "";
+  display: inline-block;
+  width: 100%;
+}
+
+/* table of contents list */
+.tocify .tocify-header .tocify-item {
+  font-family: 'Fira Sans', sans-serif;
+  text-indent: initial;
+  font-size: 14px;
+  padding: 5px;
+  color: #2c2825;
+}
+
+.tocify .tocify-subheader .tocify-item {
+  font-family: 'Fira Sans', sans-serif;
+  text-indent: initial;
+  font-size: 13px;
+  padding-left: 2em;
+  color: #2c2825;
+}
+
+.tocify .tocify-item.active {
+  background-color: #f9bf07;
+  color: #2c2825;
+}
+
+
+/* images */
+img {
+  margin: 0px 0px 20px;
+}
+
+/* lists */
+li {
+  margin-bottom: 10px;
+}
+
+li:last-child {
+ margin-bottom: 0px;
+}
+
+/* reference and figure links */
+a {
+color: #5881c1;
+}
+
+/* super-script endnote links */
+sup {
+color: #5881c1;
+}
+
+/*
+#references.section.level1 {
+  color: #5881c1;
+}
+*/
