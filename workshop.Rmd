@@ -1702,7 +1702,7 @@ res$conf.int[2]
 
 We can use this to look the percent deviation of the confidence limits from the mean as the number of replications increases to help us determine accuracy of our mean from these.
 
-Create a blank data frame to hold the cumulative results and then loop through:
+Create a blank data frame to hold the cumulative results and then loop through: 
 
 ```{r part 3: sufficient replications 1}
 check_baseline_replications <- data.frame(matrix(ncol = 5, nrow = 0))
