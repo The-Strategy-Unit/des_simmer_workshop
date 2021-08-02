@@ -1,7 +1,7 @@
 ---
 title: "Workshop for Simmer in R training"
 description: Based on previous workshops in Simul8 and JaamSim using a primary care example
-author: Stacey Croft, Anastasiia Zharinova and Tom Jemmett
+author: Stacey Croft, Anastasiia Zharinova, and Tom Jemmett
 date: 8^th^ July 2021
 output:
   html_document:
