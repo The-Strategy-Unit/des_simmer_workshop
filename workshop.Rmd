@@ -268,7 +268,7 @@ with 2 receptionists
 #1               0           334
 ```
 
-# Scenario additional model features
+### Scenario additional model features
 
 Glimpse the end tail and also check whether ECR backlog is cleared at the end of the days. Overall backlog - let's look at 1 replication
 
