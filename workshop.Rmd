@@ -207,7 +207,7 @@ env_part1 <- simmer("part 1") %>%
 The simulation will run until all arrivals are finished, as we haven't specified a time in the run command. We are assuming that staff stay overtime to finish. 
 Setting a seed value makes it so we always get the same starting point for random numbers, making our results repeatable, the choice of seed is not important here.
 
-```{r part 1: run the model, include=FALSE}
+```{r part 1: run the model, echo=TRUE, results='hide'}
 set.seed(1)
 env_part1 %>%
   run()
@@ -600,7 +600,7 @@ env_part2 %>%
 
 Set the random seed to 1 to give us the same results each time. Run the model for 5 days (5*24*60) or use one of the time helper functions.
 
-```{r part 2: run model, include=FALSE}
+```{r part 2: run model, echo=TRUE, results='hide'}
 set.seed(1)
 env_part2 %>%
   run(t_day(5))
@@ -866,7 +866,7 @@ env_part2B %>%
 
 Run the model for 5 days
 
-```{r part 2: option B run, warning=FALSE, include=FALSE}
+```{r part 2: option B run, warning=FALSE, echo=TRUE, results='hide'}
 set.seed(1)
 env_part2B %>%
   run(t_day(5))
@@ -933,7 +933,7 @@ Now we are going to run our model 50 times and analyse different scenarios.
 
 Use lapply to loop through and replicate the environment you created in Part 2 50 times. 
 
-```{r part 3: replicate model runs, include=FALSE}
+```{r part 3: replicate model runs, echo=TRUE, results='hide'}
 envs_baseline <- lapply(1:50, function(i) {
   set.seed(i)
   simmer("baseline") %>%
@@ -1099,7 +1099,7 @@ dist_patient_interarrival3_S <- function() rexp(1,  (40 * 1.45) / t_hour(2))
 Similar to the code used for the replications of the [baseline](#p3_baserep), run the new scenario trajectory 50 times. We
 lapply as before but using the trajectory for the scenario (patient_flow3) and increasing frequency of arrivals using the scenarios interarrival distributions.
 
-```{r part 4: replicate model runs, include=FALSE}
+```{r part 4: replicate model runs, echo=TRUE, results='hide'}
 envs_scenario <- lapply(1:50, function(i) {
   set.seed(i)
   simmer("scenario") %>%
@@ -1386,7 +1386,7 @@ ggplot(part3_summary_byreplication, aes(mean_wait)) +
 
 To include the set_attribute using now() we reference the correct environment for each replication
 
-```{r part 3: option B set up, include=FALSE}
+```{r part 3: option B set up, echo=TRUE, results='hide'}
 envs_baselineB <- lapply(1:50, function(i) {
   assign(paste("env", i[1], sep = "_"), simmer("baselineB"))
   get(paste0("env_", i))
@@ -1535,7 +1535,7 @@ baseline_callwait_summary$mean_wait
 
 Trajectory must be included inside the lapply for replication
 
-```{r part 3: option B set up scenario, include=FALSE}
+```{r part 3: option B set up scenario, echo=TRUE, results='hide'}
 envs_scenarioB <- lapply(1:50, function(i) {
   assign(paste("env", i[1], sep = "_"), simmer("scenarioB"))
   get(paste0("env_", i))
