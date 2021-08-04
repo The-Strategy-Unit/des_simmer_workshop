@@ -47,7 +47,7 @@ suppressPackageStartupMessages({
   library(simmer)
   library(simmer.plot)
   library(TruncatedNormal)
-  library(xlsx)
+  library(writexl)
   library(gridExtra)
 })
 ```
