@@ -12,7 +12,7 @@ output:
     css: strategy_unit.css
 ---
 # Introduction
-This workshop builds a discrete event simulation model using a primary care example. The model worksheet can be found here: [LINK]
+This workshop builds a discrete event simulation model using a primary care example. The model worksheet and supporting material (slides, videos etc) can be found [here](https://future.nhs.uk/GPsal/view?objectId=29002352).
 
 It outlines the scenarios, giving a flow chart of the flow of patients through the activities. It then gives prompts on how to construct the model, as well as asking questions after each section.
 
@@ -466,12 +466,13 @@ Q3.	What can you say about the wait for call to be answered?
 The attribute data can be used to calculate call waiting time from the recorded times in the attributes, remembering to include 5 min for those who reneged. We don't have any unfinished calls in our model but we could use the duration of the run and the time they entered the queue to get this. This approach will cause extra complexity in part 3 of the workshop, but it might work better in other models when you have different resources and servers.
 
 ```{r part 1B Q3a}
-part1B_callwait_results<-env_part1B%>%get_mon_attributes() %>%
+part1B_callwait_results<-env_part1B%>%
+  get_mon_attributes() %>%
   pivot_wider(-c(time, replication), names_from = key, values_from = value) %>%
   filter(via_ecr==0 & arrival>=0) %>%
   mutate(wait_time_call=ifelse(is.na(reneged),
-                                      call_taken - arrival),#has been answered
-                               5))
+                                      call_taken - arrival,#has been answered
+                               5))# has reneged
 ```
 
 Then calculate desired summary statistics as before. 
@@ -681,7 +682,7 @@ plot(get_mon_arrivals(env_part2), metric = "waiting_time")
 
 #### Boxplot to show variation in metrics e.g. call_wait
 
-```{r part 2: boxplots, warning=FALSE}
+```{r part 2: boxplot part2 callwait, warning=FALSE}
 g1 <- ggplot() +
   geom_boxplot(data = part2_callwait_results,
                aes(x = "rep=1", y = wait_time_call),
@@ -706,7 +707,7 @@ g1
 
 Glimpse the end tail and also check whether ECR backlog is cleared at the end of the days. Overall backlog:
 
-```{r part 2: boxplots 2, warning=FALSE}
+```{r part 2: unfinished part2}
 attributes <- env_part2 %>%
   get_mon_attributes() %>%
   filter(replication == 1)
@@ -1251,7 +1252,7 @@ Using the ggplot2 package and geom_boxplot(), create boxplots of the means of th
 
 a) create 2 different plots and put them on one chart using gridExtra package
 
-```{r part 3: Boxplot version 1}
+```{r part 3: Boxplot part3a, warning=FALSE}
 a <- ggplot(baseline_callwait_replication_summary) +
   geom_boxplot(aes(x = scenario, y = mean_wait),
                outlier.shape = 19,
@@ -1279,7 +1280,7 @@ grid.arrange(a, b, ncol = 2, nrow = 1, top = "Call wait mean results of baseline
 
 b) Create one plot from combined dataset. Using bind_rows(), create one dataset with both scenarios and plot them together using ggplot2 already have the averages of by replications in part3_summary_byreplication
 
-```{r part 3: Boxplot version 2}
+```{r part 3: Boxplot part3b, warning=FALSE}
 part3_summary <- bind_rows(baseline_callwait_summary, scenario_callwait_summary)
 
 # plot
