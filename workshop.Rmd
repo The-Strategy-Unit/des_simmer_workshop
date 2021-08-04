@@ -83,7 +83,7 @@ You can use helper functions, one option:
 dist_helper <- function(rfn, ...) {
   function() rfn(1, ...)
 }
-dist_patient_interarrival <- dist_helper(rexp, 50 / 60)
+dist_patient_interarrival <- dist_helper(rexp, 40 / 60)
 dist_screening            <- dist_helper(rtnorm, 4, 1,    0, Inf)
 dist_decision             <- dist_helper(rtnorm, 1, 0.25, 0, Inf)
 dist_booking              <- dist_helper(rtnorm, 1, 0.25, 0, Inf)
@@ -92,7 +92,7 @@ dist_booking              <- dist_helper(rtnorm, 1, 0.25, 0, Inf)
 Alternatively:
 
 ```{r part 1: create continuous distribution functions (second option)}
-dist_patient_interarrival <- function() rexp(1, 50 / 60)
+dist_patient_interarrival <- function() rexp(1, 40 / 60)
 dist_screening            <- function() rtnorm(n = 1, mu = 4, sd = 1, lb = 0, ub = Inf)
 dist_decision             <- function() rtnorm(n = 1, mu = 1, sd = 0.25, lb = 0, ub = Inf)
 dist_booking              <- function() rtnorm(n = 1, mu = 1, sd = 0.25, lb = 0, ub = Inf)
@@ -199,7 +199,7 @@ Add a generator to control the arrival of patient contacts to your trajectory us
 ```{r part 1: add resources and entity generator}
 env_part1 <- simmer("part 1") %>%
   add_resource("receptionist", 2) %>%
-  add_generator("patient", patient_flow, to(8 * 60, dist_patient_interarrival), mon = 2)
+  add_generator("patient", patient_flow, to(10 * 60, dist_patient_interarrival), mon = 2)
 ```
 
 ## Run the model
@@ -428,7 +428,7 @@ env_part1B <- simmer("part 1B") %>%
 
 Run Part 1B model
 
-```{r part 1B run}
+```{r part 1B run, echo=TRUE, results='hide'}
 set.seed(1)
 env_part1B %>% run()
 ```
@@ -1426,7 +1426,6 @@ envs_baselineB <- lapply(1:50, function(i) {
 
   # Overall trajectory:
 
-  rm(patient_flow3B)
   patient_flow3B <- trajectory("patient flow3B") %>%
     branch(dist_contact_mode, TRUE,
            branch_ecr,
@@ -1574,7 +1573,6 @@ envs_scenarioB <- lapply(1:50, function(i) {
     set_attribute("call_end", function() now(get(paste0("env_", i)))) # changed to env_part2B
 
   # Overall trajectory:
-  rm(patient_flow3BS)
 
   # Create a new patient flow trajectory using the new contact mode distribution
   patient_flow3BS <- trajectory("patient flow3BS") %>%
