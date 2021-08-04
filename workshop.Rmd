@@ -11,7 +11,9 @@ output:
     df_print: "kable"
     css: strategy_unit.css
 ---
+
 # Introduction
+
 This workshop builds a discrete event simulation model using a primary care example. The model worksheet and supporting material (slides, videos etc) can be found [here](https://future.nhs.uk/GPsal/view?objectId=29002352).
 
 It outlines the scenarios, giving a flow chart of the flow of patients through the activities. It then gives prompts on how to construct the model, as well as asking questions after each section.
@@ -923,7 +925,7 @@ part2B_callwait_summary <- part2B_callwait_results %>%
 part2B_callwait_summary
 ```
 
-#Part 3 Multiple runs and Scenarios
+# Part 3 Multiple runs and Scenarios
 
 Now we are going to run our model 50 times and analyse different scenarios.
 
