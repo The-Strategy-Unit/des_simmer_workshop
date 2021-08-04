@@ -24,6 +24,8 @@ jobs:
         git rm workshop.Rmd
         git rm README.md
         git rm -r .github
+        git rm .gitignore
+        git rm *.Rproj
         mv workshop.html index.html
         git add .
         git commit -m "redeploy pages"
