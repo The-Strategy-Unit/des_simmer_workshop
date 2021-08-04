@@ -36,7 +36,7 @@ su_theme_pal <- function(palette = "main", ...) {
 If you haven't already got these packages installed you will need the following to complete this workshop:
 
 ```{r install packages, eval = FALSE}
-install.packages(c("tidyverse", "simmer", "simmer.plot", "gridExtra", "TruncatedNormal","xlsx","ggplot2"))
+install.packages(c("tidyverse", "simmer", "simmer.plot", "gridExtra", "TruncatedNormal", "writexlsx", "ggplot2"))
 ```
 
 # Part 1 - Initial Model
@@ -71,8 +71,8 @@ There are 4 time related distributions to create:
 - and the booking of the appointment (if needed).
 
 ```{r part 1: example distribution}
-# generic exponential distribution 
-rexp(n = 1, rate = 1 )
+# generic exponential distribution
+rexp(n = 1, rate = 1)
 # generic truncated normal distributions looks like:
 rtnorm(n = 1, mu = 1, sd = 0.25, lb = 0, ub = Inf)
 ```
@@ -183,7 +183,7 @@ patient_flow <- trajectory("patient flow") %>%
          branch_booking_phone,
          branch_booking_f2f)
 
-patient_flow 
+patient_flow
 
 plot(patient_flow, fill = su_theme_pal("main"))
 
@@ -346,7 +346,7 @@ An alternative way to do this, uses the way described above but with the additio
 
 ### New environment
 ```{r part 1B env}
-env_part1B <- simmer("part 1B") 
+env_part1B <- simmer("part 1B")
 env_part1B
 ```
 
@@ -355,43 +355,43 @@ env_part1B
 Phone branch: As Option A with the addition of setting an attribute for the time of events e.g. the time a patients call is answered using 'now(env_part1)'. 
 
 ```{r part 1B phone branch}
-renege_hungupB<-trajectory("hung up")%>%
-  set_attribute("reneged", 1)%>% 
-  set_attribute("reneged_at", function() now(env_part1B)) %>%#Opt.B addition
+renege_hungupB <- trajectory("hung up") %>%
+  set_attribute("reneged", 1) %>%
+  set_attribute("reneged_at", function() now(env_part1B)) %>% #Opt.B addition
   log_("lost my patience. Hanging up...")
 
 branch_phoneB <- trajectory("branch phone") %>%
   set_attribute("via_ecr", 0) %>%
-  set_attribute("arrival", function() now(env_part1B)) %>%#Opt.B addition
-  renege_in(t=5, out=renege_hungup)%>%
+  set_attribute("arrival", function() now(env_part1B)) %>% #Opt.B addition
+  renege_in(t = 5, out = renege_hungup) %>%
   seize("receptionist") %>%
-  set_attribute("call_taken", function() now(env_part1B)) %>%#Opt.B addition
-  renege_abort() %>%# now have a receptionist the patient won't renege
+  set_attribute("call_taken", function() now(env_part1B)) %>% #Opt.B addition
+  renege_abort() %>% # now have a receptionist the patient won't renege
   timeout(dist_screening)
 ```
 
 Outcome branches: As option A but with additional set attributes
 
 ```{r part 1B outcome branches}
-#No appointment needed: 
+#No appointment needed:
 branch_booking_noneB <- trajectory("no appointment needed") %>%
   release("receptionist") %>%
-  set_attribute("booked_appt", 0)%>%
-  set_attribute("call_end", function() now(env_part1B))#Opt.B addition
+  set_attribute("booked_appt", 0) %>%
+  set_attribute("call_end", function() now(env_part1B)) #Opt.B addition
 
 #Phone appointment needed:
 branch_booking_phoneB <- trajectory("booking a f2f") %>%
-  timeout(dist_booking)%>%
+  timeout(dist_booking) %>%
   release("receptionist") %>%
-  set_attribute("booked_appt", 1)%>%
-  set_attribute("call_end", function() now(env_part1B))#Opt.B addition
+  set_attribute("booked_appt", 1) %>%
+  set_attribute("call_end", function() now(env_part1B)) #Opt.B addition
 
 #Face to Face appointment needed:
 branch_booking_f2fB <- trajectory("booking a f2f") %>%
-  timeout(dist_booking)%>%
-  release("receptionist")%>%
-  set_attribute("booked_appt", 2)%>%
-  set_attribute("call_end", function() now(env_part1B))#Opt.B addition
+  timeout(dist_booking) %>%
+  release("receptionist") %>%
+  set_attribute("booked_appt", 2) %>%
+  set_attribute("call_end", function() now(env_part1B)) #Opt.B addition
 ```
 
 ### Overall trajectory
@@ -413,7 +413,7 @@ patient_flowB <- trajectory("patient flowB") %>%
 Look at option B's trajectory, note the additional set attributes to the plot produced by option A
 
 ```{r part 1B option B traj plot}
-plot(patient_flowB, fill=su_theme_pal("main"))
+plot(patient_flowB, fill = su_theme_pal("main"))
 ```
 
 ### Populate and run option B environment
@@ -423,7 +423,7 @@ As before but using the option B trajectory
 ```{r part 1B populate}
 env_part1B <- simmer("part 1B") %>%
   add_resource("receptionist", 2) %>%
-  add_generator("patient", patient_flowB, to(10 * 60, dist_patient_interarrival),mon=2)
+  add_generator("patient", patient_flowB, to(10 * 60, dist_patient_interarrival), mon = 2)
 ```
 
 Run Part 1B model
@@ -440,10 +440,10 @@ env_part1B %>% run()
 Q1. How many patients fail to speak to the receptionist (renege)?
 
 ```{r part 1B Q1}
-env_part1B%>%  
-  get_mon_attributes() %>% 
-  filter(key=="reneged")%>%
-  summarise(countreneged=n())
+env_part1B %>%
+  get_mon_attributes() %>%
+  filter(key == "reneged") %>%
+  summarise(countreneged = n())
 ```
 
 n=151, same as before
@@ -453,10 +453,10 @@ n=151, same as before
 Q2.	How many people get a F2F booking?
 
 ```{r part 1B Q2}
-env_part1B%>%  
-  get_mon_attributes() %>% 
-  filter(key=="booked_appt"&value==2)%>%
-  summarise(countF2F=n())
+env_part1B %>%
+  get_mon_attributes() %>%
+  filter(key == "booked_appt", value == 2) %>%
+  summarise(countF2F = n())
 ```
 
 n=28, same as before
@@ -468,28 +468,28 @@ Q3.	What can you say about the wait for call to be answered?
 The attribute data can be used to calculate call waiting time from the recorded times in the attributes, remembering to include 5 min for those who reneged. We don't have any unfinished calls in our model but we could use the duration of the run and the time they entered the queue to get this. This approach will cause extra complexity in part 3 of the workshop, but it might work better in other models when you have different resources and servers.
 
 ```{r part 1B Q3a}
-part1B_callwait_results<-env_part1B%>%
+part1B_callwait_results <- env_part1B %>%
   get_mon_attributes() %>%
   pivot_wider(-c(time, replication), names_from = key, values_from = value) %>%
-  filter(via_ecr==0 & arrival>=0) %>%
-  mutate(wait_time_call=ifelse(is.na(reneged),
-                                      call_taken - arrival,#has been answered
-                               5))# has reneged
+  filter(via_ecr == 0, arrival >= 0) %>%
+  mutate(wait_time_call = ifelse(is.na(reneged),
+                                 call_taken - arrival, #has been answered
+                                 5)) # has reneged
 ```
 
 Then calculate desired summary statistics as before. 
 
 ```{r part 1B Q3b}
-part1B_callwait_summary<-part1B_callwait_results%>%
-  summarise(median_wait=median(wait_time_call),
-            mean_wait=mean(wait_time_call),
-            var_wait=var(wait_time_call),
-            min_wait=min(wait_time_call), 
-            max_wait=max(wait_time_call),
-            Qtile25th_wait=quantile(wait_time_call, probs=0.25),
-            Qtile75th_wait=quantile(wait_time_call, probs=0.75),
-            countunfinished=sum(case_when(is.na(call_end) & is.na(reneged)~ 1, TRUE ~ 0)),
-            countfinished=sum(case_when(!is.na(call_end) | !is.na(reneged)~1, TRUE ~ 0))) 
+part1B_callwait_summary <- part1B_callwait_results %>%
+  summarise(median_wait = median(wait_time_call),
+            mean_wait = mean(wait_time_call),
+            var_wait = var(wait_time_call),
+            min_wait = min(wait_time_call),
+            max_wait = max(wait_time_call),
+            Qtile25th_wait = quantile(wait_time_call, probs = 0.25),
+            Qtile75th_wait = quantile(wait_time_call, probs = 0.75),
+            countunfinished = sum(is.na(call_end) & is.na(reneged)),
+            countfinished = sum(!is.na(call_end) | !is.na(reneged)))
 
 part1B_callwait_summary
 ```
@@ -1002,8 +1002,8 @@ We also need to consider duplicates in our results.
 ```{r part 3: duplicates}
 envs_baseline %>%
   get_mon_arrivals(ongoing = TRUE) %>% # 101972 rows
-  filter(replication == 1, is.na(end_time))%>%
-  head(n=10)
+  filter(replication == 1, is.na(end_time)) %>%
+  head(n = 10)
 ```
 
 Now considering this let's calculate the call waits:
@@ -1494,7 +1494,7 @@ baselineB_callwait_results <- envs_baselineB %>%
   mutate(wait_time_call = case_when(
     !is.na(reneged) ~ 5,
     is.na(call_taken) ~ t_day(5) - arrival,
-    TRUE ~ call_taken - arrival 
+    TRUE ~ call_taken - arrival
   ))
 
 baselineB_callwait_replication_summary <- baselineB_callwait_results %>%
@@ -1641,7 +1641,7 @@ scenarioB_callwait_results <- envs_scenarioB %>%
   mutate(wait_time_call = case_when(
     !is.na(reneged) ~ 5,
     is.na(call_taken) ~ t_day(5) - arrival,
-    TRUE ~ call_taken - arrival 
+    TRUE ~ call_taken - arrival
   ))
 
 scenarioB_callwait_replication_summary <- scenarioB_callwait_results %>%
